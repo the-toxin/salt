@@ -210,6 +210,48 @@ def run_salt_cmds():
     return _run_salt_cmds_fn
 
 
+@pytest.fixture(scope="package")
+def run_salt_schedule_cmds():
+    def _run_salt_schedule_cmds_fn(clis, minions):
+        """
+        Run schedule.list from all clis to all minions
+        """
+        returned_minions = []
+        minions_to_check = {minion.id: minion for minion in minions}
+
+        attempts = 6
+        timeout = 5
+        if salt.utils.platform.spawning_platform():
+            timeout *= 2
+        while attempts:
+            if not minions_to_check:
+                break
+            for cli in clis:
+                for minion in list(minions_to_check):
+                    try:
+                        ret = cli.run(
+                            f"--timeout={timeout}",
+                            "schedule.list",
+                            "show_all=True",
+                            minion_tgt=minion,
+                        )
+                        if ret.returncode == 0:
+                            returned_minions.append((cli, minions_to_check[minion], ret.data))
+                            minions_to_check.pop(minion)
+                    except FactoryTimeout:
+                        log.debug(
+                            "Failed to execute schedule.list from %s to %s.",
+                            cli.get_display_name(),
+                            minion,
+                        )
+            time.sleep(1)
+            attempts -= 1
+
+        return returned_minions
+
+    return _run_salt_schedule_cmds_fn
+
+
 @pytest.fixture(autouse=True)
 def ensure_connections(
     salt_mm_failover_master_1,

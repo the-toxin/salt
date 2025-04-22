@@ -127,6 +127,56 @@ def test_failover_to_second_master(
         assert (mm_failover_master_2_salt_cli, salt_mm_failover_minion_2) in returns
 
 
+def test_scheduled_jobs_on_failover_to_second_master(
+    event_listener,
+    salt_mm_failover_master_1,
+    salt_mm_failover_master_2,
+    salt_mm_failover_minion_1,
+    salt_mm_failover_minion_2,
+    mm_failover_master_2_salt_cli,
+    run_salt_schedule_cmds,
+):
+    """
+    Test then when the first master is stopped, connected minions failover to the second master.
+    And the schedule list contains only "__master_alive" schedule targeted to the second master.
+    """
+    event_patterns = [
+        (
+            salt_mm_failover_master_2.id,
+            f"salt/minion/{salt_mm_failover_minion_1.id}/start",
+        )
+    ]
+
+    start_time = time.time()
+    with salt_mm_failover_master_1.stopped():
+        assert salt_mm_failover_master_2.is_running()
+        # We need to wait for them to realize that the master is not alive
+        # At this point, only the first minion will need to change masters
+        events = event_listener.wait_for_events(
+            event_patterns,
+            timeout=salt_mm_failover_minion_1.config["master_alive_interval"] * 4,
+            after_time=start_time,
+        )
+
+        assert salt_mm_failover_minion_1.is_running()
+        assert not events.missed
+
+        returns = run_salt_schedule_cmds(
+            [mm_failover_master_2_salt_cli],
+            [salt_mm_failover_minion_1, salt_mm_failover_minion_2],
+        )
+
+        mm_master_1_addr = salt_mm_failover_master_1.config["interface"]
+        mm_master_1_schedule_name = f"__master_alive_{mm_master_1_addr}"
+        mm_master_2_addr = salt_mm_failover_master_2.config["interface"]
+        mm_master_2_schedule_name = f"__master_alive_{mm_master_2_addr}"
+
+        assert len(returns) == 2
+        for i in range(len(returns)):
+            assert mm_master_2_schedule_name in returns[i][2]
+            assert mm_master_1_schedule_name not in returns[i][2]
+
+
 def test_minion_reconnection(
     salt_mm_failover_minion_1,
     salt_mm_failover_minion_2,
